@@ -1,0 +1,12 @@
+node_modules/
+.expo/
+*.jks
+*.keystore
+*.pem
+*.p12
+*.pfx
+*.key
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties

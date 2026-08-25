@@ -1,0 +1,73 @@
+{
+  "expo": {
+    "name": "مدیریت خودرو",
+    "slug": "carmangment",
+    "version": "3.4.1",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "carmangment",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/images/icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#071016"
+    },
+    "android": {
+      "package": "com.carmangment.app",
+      "versionCode": 11,
+      "enableProguardInReleaseBuilds": true,
+      "adaptiveIcon": {
+        "backgroundColor": "#071016",
+        "foregroundImage": "./assets/images/android-icon-foreground-v3.png"
+      },
+      "permissions": [
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.USE_BIOMETRIC",
+        "android.permission.USE_FINGERPRINT",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION"
+      ],
+      "softwareKeyboardLayoutMode": "resize"
+    },
+    "plugins": [
+      [
+        "expo-router",
+        {
+          "origin": "https://carmangment.app"
+        }
+      ],
+      "expo-font",
+      "expo-document-picker",
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Allow $(PRODUCT_NAME) to use Face ID"
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/android-icon-monochrome.png",
+          "color": "#007F6D"
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "برای ثبت خودکار مسافت سفر به موقعیت مکانی شما نیاز است."
+        }
+      ],
+      "react-native-keyboard-controller"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {},
+    "androidNavigationBar": {
+      "backgroundColor": "#00A6A6",
+      "barStyle": "light-content",
+      "enforceContrast": false
+    }
+  }
+}
