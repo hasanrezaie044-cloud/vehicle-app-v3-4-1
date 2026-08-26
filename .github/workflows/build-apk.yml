@@ -1,10 +1,10 @@
-name: Build APK
+name: Build APK v3.4.2-fixes-1
 
 on:
   workflow_dispatch:
   push:
     branches:
-      - master
+      - v3.4.2-fixes-1
 
 jobs:
   build:
@@ -38,7 +38,7 @@ jobs:
       - name: Prebuild Android
         run: npx expo prebuild --platform android --non-interactive
 
-      - name: Build APK
+      - name: Build APK v3.4.2-fixes-1
         run: |
           cd android
           chmod +x gradlew
