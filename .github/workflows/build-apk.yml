@@ -41,10 +41,6 @@ jobs:
           echo "$KEYSTORE_BASE64" | base64 --decode > android/app/carmangment-release.jks
 
       - name: Configure release signing
-        env:
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -52,7 +48,9 @@ jobs:
           p = Path("android/app/build.gradle")
           s = p.read_text()
 
-          signing = '''
+          s = s.replace(
+              "android {",
+              """android {
               signingConfigs {
                   release {
                       storeFile file("carmangment-release.jks")
@@ -61,20 +59,15 @@ jobs:
                       keyPassword System.getenv("KEY_PASSWORD")
                   }
               }
-          '''
-
-          if "signingConfigs {" not in s:
-              s = s.replace("android {", "android {\\n" + signing, 1)
-
-          s = s.replace(
-              "buildTypes {",
-              'buildTypes {',
+          """,
               1
           )
 
           s = s.replace(
               "release {",
-              'release {\\n            signingConfig signingConfigs.release',
+              """release {
+                  signingConfig signingConfigs.release
+          """,
               1
           )
 
