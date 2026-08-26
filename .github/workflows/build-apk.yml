@@ -31,9 +31,6 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Prebuild Android
-        run: CI=1 npx expo prebuild --platform android
-
       - name: Check signing secrets
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
@@ -47,6 +44,12 @@ jobs:
           test -n "$KEY_PASSWORD" || { echo "KEY_PASSWORD is missing"; exit 1; }
           echo "All signing secrets are available."
 
+      - name: Prebuild Android
+        env:
+          CI: "1"
+          EXPO_NO_DOCTOR: "1"
+        run: npx expo prebuild --platform android
+
       - name: Decode release keystore
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
@@ -56,15 +59,21 @@ jobs:
           echo "Release keystore decoded successfully."
 
       - name: Configure release signing
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          import re
 
           p = Path("android/app/build.gradle")
           s = p.read_text()
 
-          signing_config = '''    signingConfigs {
+          if "signingConfigs" not in s:
+              marker = "android {"
+              config = """android {
+              signingConfigs {
                   release {
                       storeFile file("carmangment-release.jks")
                       storePassword System.getenv("KEYSTORE_PASSWORD")
@@ -72,25 +81,13 @@ jobs:
                       keyPassword System.getenv("KEY_PASSWORD")
                   }
               }
+          """
+              s = s.replace(marker, config, 1)
 
-          '''
-
-          # Add signingConfigs immediately inside android { if not already present
-          if "storeFile file(\"carmangment-release.jks\")" not in s:
-              s = s.replace(
-                  "android {",
-                  "android {\n" + signing_config,
-                  1
-              )
-
-          # Add signingConfig ONLY inside buildTypes -> release
-          pattern = r'(buildTypes\s*\{\s*release\s*\{)'
-          replacement = r'\1\n            signingConfig signingConfigs.release'
-
-          if "signingConfig signingConfigs.release" not in s:
-              s, count = re.subn(pattern, replacement, s, count=1)
-              if count != 1:
-                  raise SystemExit("Could not locate buildTypes { release { in build.gradle")
+          s = s.replace(
+              "signingConfig signingConfigs.debug",
+              "signingConfig signingConfigs.release"
+          )
 
           p.write_text(s)
           print("Release signing configuration configured.")
