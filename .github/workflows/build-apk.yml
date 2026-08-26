@@ -1,4 +1,4 @@
-name: Build APK v3.4.2-fixes-1
+name: Build APK v3.4.2 Release
 
 on:
   workflow_dispatch:
@@ -31,6 +31,9 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
+      - name: Prebuild Android
+        run: CI=1 npx expo prebuild --platform android
+
       - name: Check signing secrets
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
@@ -44,12 +47,6 @@ jobs:
           test -n "$KEY_PASSWORD" || { echo "KEY_PASSWORD is missing"; exit 1; }
           echo "All signing secrets are available."
 
-      - name: Prebuild Android
-        env:
-          CI: "1"
-          EXPO_NO_DOCTOR: "1"
-        run: npx expo prebuild --platform android
-
       - name: Decode release keystore
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
@@ -59,80 +56,56 @@ jobs:
           echo "Release keystore decoded successfully."
 
       - name: Configure release signing
-        env:
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          python3 - <<'PY2'
+          python3 - <<'PY'
           from pathlib import Path
 
           p = Path("android/app/build.gradle")
           s = p.read_text()
 
+          signing = '''    signingConfigs {
+              release {
+                  storeFile file("carmangment-release.jks")
+                  storePassword System.getenv("KEYSTORE_PASSWORD")
+                  keyAlias System.getenv("KEY_ALIAS")
+                  keyPassword System.getenv("KEY_PASSWORD")
+              }
+          }
+
+          '''
+
           if "signingConfigs {" not in s:
-              s = s.replace(
-                  "android {",
-                  """android {
-              signingConfigs {
-                  release {
-                      storeFile file("carmangment-release.jks")
-                      storePassword System.getenv("KEYSTORE_PASSWORD")
-                      keyAlias System.getenv("KEY_ALIAS")
-                      keyPassword System.getenv("KEY_PASSWORD")
-                  }
-              }""",
-                  1
-              )
+              s = s.replace("android {", "android {\n" + signing, 1)
 
           if "signingConfig signingConfigs.release" not in s:
               marker = "buildTypes {"
               pos = s.find(marker)
+
               if pos == -1:
                   raise SystemExit("buildTypes block not found")
 
               release_pos = s.find("release {", pos)
+
               if release_pos == -1:
                   raise SystemExit("release build type not found")
 
-              insert = release_pos + len("release {")
-              s = s[:insert] + "\n        signingConfig signingConfigs.release" + s[insert:]
+              insert_pos = release_pos + len("release {")
+              s = (
+                  s[:insert_pos]
+                  + "\n        signingConfig signingConfigs.release"
+                  + s[insert_pos:]
+              )
 
           p.write_text(s)
           print("Release signing configuration configured successfully.")
-          PY2
+          PY
+
+      - name: Verify Gradle signing configuration
+        run: |
+          grep -n -A10 -B2 "signingConfigs" android/app/build.gradle
+          grep -n -A5 -B2 "signingConfig signingConfigs.release" android/app/build.gradle
 
       - name: Build signed APK
-        env:
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: |
-          cd android
-          chmod +x gradlew
-          ./gradlew assembleRelease
-
-
-        env:
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: |
-          cd android
-          chmod +x gradlew
-          ./gradlew assembleRelease
-
-
-        env:
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: |
-          cd android
-          chmod +x gradlew
-          ./gradlew assembleRelease
-
-
         env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
@@ -145,5 +118,5 @@ jobs:
       - name: Upload signed APK
         uses: actions/upload-artifact@v4
         with:
-          name: vehicle-app-v3.4.2-fixes-1-release-apk
+          name: vehicle-app-v3.4.2-release-apk
           path: android/app/build/outputs/apk/release/*.apk
