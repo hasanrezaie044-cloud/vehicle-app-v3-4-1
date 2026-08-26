@@ -64,15 +64,16 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          python3 - <<'PY'
+          python3 - <<'PY2'
           from pathlib import Path
 
           p = Path("android/app/build.gradle")
           s = p.read_text()
 
-          if "signingConfigs" not in s:
-              marker = "android {"
-              config = """android {
+          if "signingConfigs {" not in s:
+              s = s.replace(
+                  "android {",
+                  """android {
               signingConfigs {
                   release {
                       storeFile file("carmangment-release.jks")
@@ -80,20 +81,38 @@ jobs:
                       keyAlias System.getenv("KEY_ALIAS")
                       keyPassword System.getenv("KEY_PASSWORD")
                   }
-              }
-          """
-              s = s.replace(marker, config, 1)
+              }""",
+                  1
+              )
 
-          s = s.replace(
-              "signingConfig signingConfigs.debug",
-              "signingConfig signingConfigs.release"
-          )
+          if "signingConfig signingConfigs.release" not in s:
+              marker = "buildTypes {"
+              pos = s.find(marker)
+              if pos == -1:
+                  raise SystemExit("buildTypes block not found")
+
+              release_pos = s.find("release {", pos)
+              if release_pos == -1:
+                  raise SystemExit("release build type not found")
+
+              insert = release_pos + len("release {")
+              s = s[:insert] + "\n        signingConfig signingConfigs.release" + s[insert:]
 
           p.write_text(s)
-          print("Release signing configuration configured.")
-          PY
+          print("Release signing configuration configured successfully.")
+          PY2
 
       - name: Build signed APK
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleRelease
+
+
         env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
