@@ -87,7 +87,7 @@ jobs:
               )
 
           if "signingConfig signingConfigs.release" not in s:
-              pattern = r"(buildTypes\\s*\\{\\s*release\\s*\\{)"
+              pattern = r"(buildTypes\s*{\s*release\s*{)"
               replacement = r"\\1\n            signingConfig signingConfigs.release"
 
               s, count = re.subn(
