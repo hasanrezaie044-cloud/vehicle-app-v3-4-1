@@ -50,7 +50,6 @@
           "color": "#007F6D"
         }
       ],
-      "react-native-keyboard-controller"
     ],
     "experiments": {
       "typedRoutes": true
