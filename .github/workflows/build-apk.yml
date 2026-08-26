@@ -35,7 +35,7 @@ jobs:
         run: npm install -g expo-cli
 
       - name: Prebuild Android
-        run: npx expo prebuild --platform android --non-interactive
+        run: CI=1 npx expo prebuild --platform android
 
       - name: Build APK v3.4.2-fixes-1
         run: |
