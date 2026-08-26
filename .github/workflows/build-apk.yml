@@ -79,7 +79,7 @@ jobs:
           if "storeFile file(\"carmangment-release.jks\")" not in s:
               s = s.replace(
                   "android {",
-                  "android {\\n" + signing_config,
+                  "android {\n" + signing_config,
                   1
               )
 

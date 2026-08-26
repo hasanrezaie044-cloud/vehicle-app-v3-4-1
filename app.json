@@ -2,7 +2,7 @@
   "expo": {
     "name": "مدیریت خودرو",
     "slug": "carmangment",
-    "version": "3.4.1",
+    "version": "3.4.2",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "carmangment",
@@ -15,7 +15,7 @@
     },
     "android": {
       "package": "com.carmangment.app",
-      "versionCode": 11,
+      "versionCode": 12,
       "enableProguardInReleaseBuilds": true,
       "adaptiveIcon": {
         "backgroundColor": "#071016",
