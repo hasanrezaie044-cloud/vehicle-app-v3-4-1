@@ -72,40 +72,28 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          python3 - <<'PY'
+          python3 <<'PY'
           from pathlib import Path
 
-          p = Path("android/app/build.gradle")
-          s = p.read_text()
+          path = Path("android/app/build.gradle")
+          text = path.read_text()
 
-          # Remove existing signingConfigs blocks
-          while "signingConfigs {" in s:
-              start = s.find("signingConfigs {")
-              brace = s.find("{", start)
-              depth = 0
-              end = None
+          if "signingConfigs {" in text:
+              print("Existing signingConfigs found")
 
-              for i in range(brace, len(s)):
-                  if s[i] == "{":
-                      depth += 1
-                  elif s[i] == "}":
-                      depth -= 1
-                      if depth == 0:
-                          end = i + 1
-                          break
-
-              if end is None:
-                  raise SystemExit("Could not remove signingConfigs block")
-
-              s = s[:start] + s[end:]
-
-          # Find android block
-          android_pos = s.find("android {")
-
-          if android_pos == -1:
+          android_start = text.find("android {")
+          if android_start == -1:
               raise SystemExit("android block not found")
 
-          signing = """
+          buildtypes_start = text.find("buildTypes {", android_start)
+          if buildtypes_start == -1:
+              raise SystemExit("buildTypes block not found")
+
+          release_start = text.find("release {", buildtypes_start)
+          if release_start == -1:
+              raise SystemExit("release block not found")
+
+          signing = '''
               signingConfigs {
                   release {
                       storeFile file("carmangment-release.jks")
@@ -114,49 +102,39 @@ jobs:
                       keyPassword System.getenv("KEY_PASSWORD")
                   }
               }
-          """
+          '''
 
-          insert_pos = android_pos + len("android {")
-          s = s[:insert_pos] + signing + s[insert_pos:]
+          text = text[:android_start + len("android {")] + signing + text[android_start + len("android {"):]
 
-          # Find buildTypes
-          buildtypes_pos = s.find("buildTypes {")
+          buildtypes_start = text.find("buildTypes {", android_start)
+          release_start = text.find("release {", buildtypes_start)
 
-          if buildtypes_pos == -1:
-              raise SystemExit("buildTypes block not found")
+          insert_at = release_start + len("release {")
 
-          # Find release inside buildTypes
-          release_pos = s.find("release {", buildtypes_pos)
-
-          if release_pos == -1:
-              raise SystemExit("release build type not found")
-
-          insert_pos = release_pos + len("release {")
-
-          s = (
-              s[:insert_pos]
-              + """
+          text = (
+              text[:insert_at]
+              + '''
                   signingConfig signingConfigs.release
-              """
-              + s[insert_pos:]
+              '''
+              + text[insert_at:]
           )
 
-          p.write_text(s)
-          print("RELEASE SIGNING CONFIGURED SUCCESSFULLY")
+          path.write_text(text)
+          print("Release signing configured")
           PY
 
-      - name: Verify Gradle signing configuration
+      - name: Verify signing configuration
         run: |
           echo "===== SIGNING CONFIG ====="
           grep -n -A12 -B2 "signingConfigs" android/app/build.gradle || true
 
-          echo "===== BUILD TYPES ====="
-          grep -n -A15 -B2 "buildTypes" android/app/build.gradle || true
+          echo "===== RELEASE CONFIG ====="
+          grep -n -A12 -B2 "release {" android/app/build.gradle || true
 
           echo "===== SIGNING REFERENCES ====="
           grep -n "signingConfig" android/app/build.gradle || true
 
-      - name: Build signed Release APK
+      - name: Build Release APK
         env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
@@ -171,7 +149,7 @@ jobs:
         run: |
           ls -lh android/app/build/outputs/apk/release/*.apk
 
-      - name: Verify APK is NOT debug-signed
+      - name: Verify APK is release signed
         run: |
           APK=$(find android/app/build/outputs/apk/release -name "*.apk" -type f | head -1)
           APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)
@@ -181,7 +159,6 @@ jobs:
           echo "APKSIGNER: $APKSIGNER"
 
           "$APKSIGNER" verify --verbose --print-certs "$APK" > signer.txt
-
           cat signer.txt
 
           if grep -q "CN=Android Debug" signer.txt; then
@@ -191,9 +168,29 @@ jobs:
 
           echo "SUCCESS: APK IS NOT DEBUG-SIGNED."
 
-      - name: Upload signed APK
+      - name: Verify APK certificate matches release keystore
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        run: |
+          keytool -list -v \
+            -keystore android/app/carmangment-release.jks \
+            -storepass "$KEYSTORE_PASSWORD" \
+            -alias "$KEY_ALIAS" > keystore.txt
+
+          APK=$(find android/app/build/outputs/apk/release -name "*.apk" -type f | head -1)
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)
+
+          "$APKSIGNER" verify --verbose --print-certs "$APK" > apk-cert.txt
+
+          echo "===== KEYSTORE CERTIFICATE ====="
+          grep -E "Owner:|SHA256:" keystore.txt || true
+
+          echo "===== APK CERTIFICATE ====="
+          grep -E "certificate DN:|certificate SHA-256 digest:" apk-cert.txt || true
+
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: vehicle-app-v3.4.2-fixes-1-release-apk
           path: android/app/build/outputs/apk/release/*.apk
-# Release signing workflow
