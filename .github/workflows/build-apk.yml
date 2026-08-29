@@ -196,3 +196,4 @@ jobs:
         with:
           name: vehicle-app-v3.4.2-fixes-1-release-apk
           path: android/app/build/outputs/apk/release/*.apk
+# Release signing workflow
