@@ -32,7 +32,7 @@ jobs:
         uses: android-actions/setup-android@v3
 
       - name: Expo Prebuild
-        run: CI=1 npx expo prebuild --platform android --non-interactive
+        run: CI=1 npx expo prebuild --platform android
 
       - name: Check signing secrets
         env:
@@ -41,36 +41,29 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          set -e
           test -n "$KEYSTORE_BASE64"
           test -n "$KEYSTORE_PASSWORD"
           test -n "$KEY_ALIAS"
           test -n "$KEY_PASSWORD"
-          echo "Signing secrets are present"
+          echo "Signing secrets OK"
 
       - name: Install release keystore
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
-          set -e
           echo "$KEYSTORE_BASE64" | base64 --decode > android/app/carmangment-release.jks
           test -s android/app/carmangment-release.jks
-          chmod 600 android/app/carmangment-release.jks
-          echo "Release keystore installed"
+          echo "Keystore installed"
 
       - name: Verify release keystore
         env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
         run: |
-          set -e
-
           keytool -list \
             -keystore android/app/carmangment-release.jks \
             -storepass "$KEYSTORE_PASSWORD" \
             -alias "$KEY_ALIAS"
-
-          echo "Release keystore is valid"
 
       - name: Configure Gradle release signing
         env:
@@ -78,24 +71,39 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          set -e
-
           python3 <<'PY'
           from pathlib import Path
 
-          path = Path("android/app/build.gradle")
-          text = path.read_text()
+          p = Path("android/app/build.gradle")
+          s = p.read_text()
 
-          android_start = text.find("android {")
-          if android_start == -1:
+          # Remove existing signingConfigs block
+          marker = "signingConfigs {"
+          while marker in s:
+              start = s.find(marker)
+              brace = s.find("{", start)
+              depth = 0
+              end = None
+
+              for i in range(brace, len(s)):
+                  if s[i] == "{":
+                      depth += 1
+                  elif s[i] == "}":
+                      depth -= 1
+                      if depth == 0:
+                          end = i + 1
+                          break
+
+              if end is None:
+                  raise SystemExit("Could not remove signingConfigs")
+
+              s = s[:start] + s[end:]
+
+          android_pos = s.find("android {")
+          if android_pos == -1:
               raise SystemExit("android block not found")
 
-          buildtypes_start = text.find("buildTypes {", android_start)
-          if buildtypes_start == -1:
-              raise SystemExit("buildTypes block not found")
-
-          # Insert release signing config immediately inside android {}
-          signing_config = """
+          signing = '''
               signingConfigs {
                   release {
                       storeFile file("carmangment-release.jks")
@@ -104,79 +112,56 @@ jobs:
                       keyPassword System.getenv("KEY_PASSWORD")
                   }
               }
-          """
+          '''
 
-          text = (
-              text[:android_start + len("android {")]
-              + signing_config
-              + text[android_start + len("android {"):]
-          )
+          insert = android_pos + len("android {")
+          s = s[:insert] + signing + s[insert:]
 
-          # Recalculate buildTypes position after insertion
-          buildtypes_start = text.find("buildTypes {", android_start)
+          # Find release build type
+          buildtypes = s.find("buildTypes {")
+          if buildtypes == -1:
+              raise SystemExit("buildTypes not found")
 
-          # Find the release build type
-          release_start = text.find("release {", buildtypes_start)
-          if release_start == -1:
+          release = s.find("release {", buildtypes)
+          if release == -1:
               raise SystemExit("release build type not found")
 
-          # Check whether release already has signingConfig
-          release_end = text.find("}", release_start)
-          release_block = text[release_start:release_end]
+          release_insert = release + len("release {")
 
-          if "signingConfig" not in release_block:
-              insert_at = release_start + len("release {")
-              text = (
-                  text[:insert_at]
-                  + """
-                      signingConfig signingConfigs.release
-                  """
-                  + text[insert_at:]
-              )
+          s = (
+              s[:release_insert]
+              + '''
+                  signingConfig signingConfigs.release
+              '''
+              + s[release_insert:]
+          )
 
-          path.write_text(text)
-
-          print("Release signing configuration written successfully")
+          p.write_text(s)
+          print("Release signing configured")
           PY
 
-      - name: Show final Gradle signing configuration
+      - name: Show signing configuration
         run: |
-          echo "===== SIGNING CONFIG ====="
           grep -n -A15 -B2 "signingConfigs" android/app/build.gradle || true
-
-          echo "===== RELEASE BUILD TYPE ====="
           grep -n -A15 -B2 "buildTypes" android/app/build.gradle || true
-
-          echo "===== SIGNING REFERENCES ====="
           grep -n "signingConfig" android/app/build.gradle || true
 
-      - name: Build release APK
+      - name: Clean Gradle
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew clean
+
+      - name: Build Release APK
         env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          set -e
-
           cd android
-          chmod +x gradlew
-
-          ./gradlew clean
           ./gradlew assembleRelease
 
-      - name: Verify APK exists
-        run: |
-          set -e
-
-          APK=$(find android/app/build/outputs/apk/release \
-            -name "*.apk" -type f | head -1)
-
-          test -n "$APK"
-          test -f "$APK"
-
-          ls -lh "$APK"
-
-      - name: Verify APK is NOT debug signed
+      - name: Verify APK signature
         run: |
           set -e
 
@@ -186,51 +171,22 @@ jobs:
           APKSIGNER=$(find "$ANDROID_HOME/build-tools" \
             -name apksigner -type f | sort -V | tail -1)
 
-          echo "===== APK SIGNATURE ====="
-          echo "APK: $APK"
-          echo "APKSIGNER: $APKSIGNER"
+          echo "===== APK ====="
+          echo "$APK"
+
+          echo "===== SIGNATURE ====="
+          "$APKSIGNER" verify --verbose --print-certs "$APK"
 
           "$APKSIGNER" verify --verbose --print-certs "$APK" > signer.txt
 
-          cat signer.txt
-
           if grep -q "CN=Android Debug" signer.txt; then
-            echo "ERROR: APK IS DEBUG SIGNED!"
+            echo "ERROR: APK IS DEBUG SIGNED"
             exit 1
           fi
 
-          echo "SUCCESS: APK IS NOT DEBUG-SIGNED."
+          echo "SUCCESS: APK IS RELEASE SIGNED"
 
-      - name: Verify APK certificate
-        env:
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-        run: |
-          set -e
-
-          APK=$(find android/app/build/outputs/apk/release \
-            -name "*.apk" -type f | head -1)
-
-          APKSIGNER=$(find "$ANDROID_HOME/build-tools" \
-            -name apksigner -type f | sort -V | tail -1)
-
-          "$APKSIGNER" verify --verbose --print-certs "$APK" > apk-cert.txt
-
-          echo "===== APK CERTIFICATE ====="
-          grep "certificate DN:" apk-cert.txt
-          grep "certificate SHA-256 digest:" apk-cert.txt
-
-          echo "===== RELEASE KEYSTORE CERTIFICATE ====="
-
-          keytool -list -v \
-            -keystore android/app/carmangment-release.jks \
-            -storepass "$KEYSTORE_PASSWORD" \
-            -alias "$KEY_ALIAS" > keystore-cert.txt
-
-          grep "Owner:" keystore-cert.txt
-          grep "SHA256:" keystore-cert.txt
-
-      - name: Upload signed APK
+      - name: Upload Release APK
         uses: actions/upload-artifact@v4
         with:
           name: vehicle-app-v3.4.2-fixes-1-release-apk
