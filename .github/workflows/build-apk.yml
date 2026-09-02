@@ -1,13 +1,189 @@
-name: Workflow Syntax Test
+name: Build Android Release APK
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
 
 permissions:
   contents: read
 
 jobs:
-  test:
+  build:
     runs-on: ubuntu-latest
+
     steps:
-      - run: echo "WORKFLOW_OK"
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Android project
+        run: CI=1 npx expo prebuild --platform android
+
+      - name: Check SYSTEM_ALERT_WINDOW
+        run: |
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+
+          echo "Checking AndroidManifest.xml..."
+
+          if grep -q 'android.permission.SYSTEM_ALERT_WINDOW' "$MANIFEST"; then
+            if grep -q 'tools:node="remove"' "$MANIFEST"; then
+              echo "OK: SYSTEM_ALERT_WINDOW is explicitly blocked."
+            else
+              echo "ERROR: SYSTEM_ALERT_WINDOW permission detected!"
+              exit 1
+            fi
+          else
+            echo "OK: SYSTEM_ALERT_WINDOW is not present."
+          fi
+
+      - name: Configure release signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          test -n "$KEYSTORE_BASE64" || { echo "ERROR: KEYSTORE_BASE64 secret is missing"; exit 1; }
+          test -n "$KEYSTORE_PASSWORD" || { echo "ERROR: KEYSTORE_PASSWORD secret is missing"; exit 1; }
+          test -n "$KEY_ALIAS" || { echo "ERROR: KEY_ALIAS secret is missing"; exit 1; }
+          test -n "$KEY_PASSWORD" || { echo "ERROR: KEY_PASSWORD secret is missing"; exit 1; }
+
+          echo "$KEYSTORE_BASE64" | base64 --decode > android/app/release-key.jks
+
+          cat >> android/gradle.properties <<EOF2
+MYAPP_UPLOAD_STORE_FILE=release-key.jks
+MYAPP_UPLOAD_KEY_ALIAS=$KEY_ALIAS
+MYAPP_UPLOAD_STORE_PASSWORD=$KEYSTORE_PASSWORD
+MYAPP_UPLOAD_KEY_PASSWORD=$KEY_PASSWORD
+EOF2
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("android/app/build.gradle")
+          text = path.read_text()
+
+          old_signing = """    signingConfigs {
+        debug {
+            storeFile file('debug.keystore')
+            storePassword 'android'
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
+        }
+    }"""
+
+          new_signing = """    signingConfigs {
+        debug {
+            storeFile file('debug.keystore')
+            storePassword 'android'
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
+        }
+        release {
+            if (project.hasProperty('MYAPP_UPLOAD_STORE_FILE')) {
+                storeFile file(MYAPP_UPLOAD_STORE_FILE)
+                storePassword MYAPP_UPLOAD_STORE_PASSWORD
+                keyAlias MYAPP_UPLOAD_KEY_ALIAS
+                keyPassword MYAPP_UPLOAD_KEY_PASSWORD
+            }
+        }
+    }"""
+
+          if old_signing not in text:
+              raise SystemExit("ERROR: Expected signingConfigs block not found")
+
+          text = text.replace(old_signing, new_signing, 1)
+
+          build_types_start = text.find("    buildTypes {")
+          if build_types_start == -1:
+              raise SystemExit("ERROR: buildTypes block not found")
+
+          release_start = text.find("        release {", build_types_start)
+          if release_start == -1:
+              raise SystemExit("ERROR: release block not found")
+
+          release_signing = "            signingConfig signingConfigs.debug"
+          signing_pos = text.find(release_signing, release_start)
+
+          if signing_pos == -1:
+              raise SystemExit("ERROR: release signingConfig not found")
+
+          text = (
+              text[:signing_pos]
+              + "            signingConfig signingConfigs.release"
+              + text[signing_pos + len(release_signing):]
+          )
+
+          path.write_text(text)
+          print("Release signing configured successfully.")
+          PY
+
+      - name: Make Gradle executable
+        run: chmod +x android/gradlew
+
+      - name: Build Release APK
+        working-directory: android
+        run: ./gradlew assembleRelease
+
+      - name: Verify APK exists
+        run: |
+          APK="android/app/build/outputs/apk/release/app-release.apk"
+
+          test -f "$APK" || {
+            echo "ERROR: Release APK not found!"
+            exit 1
+          }
+
+          ls -lh "$APK"
+
+      - name: Verify APK permissions
+        run: |
+          APK="android/app/build/outputs/apk/release/app-release.apk"
+          BUILD_TOOLS=$(find "$ANDROID_HOME/build-tools" -maxdepth 1 -mindepth 1 -type d | sort -V | tail -1)
+          AAPT="$BUILD_TOOLS/aapt"
+
+          "$AAPT" dump permissions "$APK" | tee permissions.txt
+
+          if grep -q "android.permission.SYSTEM_ALERT_WINDOW" permissions.txt; then
+            echo "ERROR: SYSTEM_ALERT_WINDOW exists in final APK!"
+            exit 1
+          fi
+
+          echo "OK: SYSTEM_ALERT_WINDOW is NOT in final APK."
+
+      - name: Verify release signature
+        run: |
+          APK="android/app/build/outputs/apk/release/app-release.apk"
+          BUILD_TOOLS=$(find "$ANDROID_HOME/build-tools" -maxdepth 1 -mindepth 1 -type d | sort -V | tail -1)
+          APKSIGNER="$BUILD_TOOLS/apksigner"
+
+          "$APKSIGNER" verify --verbose "$APK"
+
+      - name: Upload Release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: vehicle-app-v3.4.1-release-apk
+          path: android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+
+      - name: Cleanup signing key
+        if: always()
+        run: rm -f android/app/release-key.jks
