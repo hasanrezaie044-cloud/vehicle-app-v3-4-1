@@ -45,8 +45,13 @@ jobs:
             echo "ERROR: KEYSTORE_BASE64 secret is missing"
             exit 1
           fi
+
           echo "$KEYSTORE_BASE64" | base64 --decode > android/app/release.keystore
-          test -s android/app/release.keystore
+
+          if [ ! -s android/app/release.keystore ]; then
+            echo "ERROR: Release keystore is empty"
+            exit 1
+          fi
 
       - name: Configure Release Signing
         env:
@@ -54,19 +59,24 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
+          if [ -z "$KEYSTORE_PASSWORD" ] || [ -z "$KEY_ALIAS" ] || [ -z "$KEY_PASSWORD" ]; then
+            echo "ERROR: One or more signing secrets are missing"
+            exit 1
+          fi
+
           python3 - <<'PY'
           from pathlib import Path
 
-          p = Path("android/app/build.gradle")
-          s = p.read_text()
+          path = Path("android/app/build.gradle")
+          text = path.read_text()
 
-          start = s.find("    signingConfigs {")
-          end = s.find("    buildTypes {", start)
+          start = text.find("    signingConfigs {")
+          build_types = text.find("    buildTypes {")
 
-          if start == -1 or end == -1:
-              raise SystemExit("ERROR: signing configuration not found")
+          if start == -1 or build_types == -1:
+              raise SystemExit("ERROR: Could not find signingConfigs/buildTypes")
 
-          new_signing = """    signingConfigs {
+          signing_block = """    signingConfigs {
           debug {
               storeFile file('debug.keystore')
               storePassword 'android'
@@ -83,24 +93,26 @@ jobs:
 
       """
 
-          s = s[:start] + new_signing + s[end:]
+          text = text[:start] + signing_block + text[build_types:]
 
-          release_start = s.find("    release {", s.find("    buildTypes {"))
-          release_end = s.find("    }", release_start)
-
+          release_start = text.find("    release {", build_types)
           if release_start == -1:
-              raise SystemExit("ERROR: release build type not found")
+              raise SystemExit("ERROR: Could not find release build type")
 
-          block = s[release_start:release_end]
+          release_end = text.find("\n    }", release_start)
+          if release_end == -1:
+              raise SystemExit("ERROR: Could not find end of release build type")
 
-          block = block.replace(
+          release_block = text[release_start:release_end]
+
+          release_block = release_block.replace(
               "signingConfig signingConfigs.debug",
               "signingConfig signingConfigs.release"
           )
 
-          s = s[:release_start] + block + s[release_end:]
+          text = text[:release_start] + release_block + text[release_end:]
 
-          p.write_text(s)
+          path.write_text(text)
           PY
 
       - name: Build Release APK
@@ -117,8 +129,10 @@ jobs:
         run: |
           APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)
           APK="android/app/build/outputs/apk/release/app-release.apk"
+
           echo "===== APK ====="
           echo "$APK"
+
           echo "===== SIGNATURE ====="
           "$APKSIGNER" verify --verbose "$APK"
 
