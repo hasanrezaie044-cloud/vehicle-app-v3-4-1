@@ -26,7 +26,10 @@
         "android.permission.USE_BIOMETRIC",
         "android.permission.USE_FINGERPRINT"
       ],
-      "softwareKeyboardLayoutMode": "resize"
+      "softwareKeyboardLayoutMode": "resize",
+      "blockedPermissions": [
+        "android.permission.SYSTEM_ALERT_WINDOW"
+      ]
     },
     "plugins": [
       [
@@ -49,8 +52,7 @@
           "icon": "./assets/images/android-icon-monochrome.png",
           "color": "#007F6D"
         }
-      ],
-      "react-native-keyboard-controller"
+      ]
     ],
     "experiments": {
       "typedRoutes": true
@@ -60,9 +62,6 @@
       "backgroundColor": "#00A6A6",
       "barStyle": "light-content",
       "enforceContrast": false
-    },
-    "blockedPermissions": [
-      "android.permission.SYSTEM_ALERT_WINDOW"
-    ]
+    }
   }
 }
